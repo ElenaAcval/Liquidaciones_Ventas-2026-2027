@@ -6,7 +6,7 @@ import requests
 st.set_page_config(page_title="Control de Liquidaciones 2026-2027", layout="wide")
 
 # URL DE TU GOOGLE SHEET PARA LECTURA CSV
-SHEET_ID = "https://docs.google.com/spreadsheets/d/19zhFm7ety4JL6sImcWF5HLHGBo_X1JkrD37FQtgndP4/edit?usp=sharing".replace(" ", "")  # Tu ID extraído de la URL
+SHEET_ID = "19zhFm7ety4JL6sImcWF5HLHGBo_X1jk rD37FQtgndP4".replace(" ", "")  # Tu ID extraído de la URL
 # PEGA AQUÍ LA URL DEL WEBHOOK DE APPS SCRIPT (Paso 1):
 WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwFVBKZXITSe9PFBe0HuQzxW6Yar4e7c29s9P8QIrzYKtlQu1zWPQnLOiFyRvkhZZr7/exec"
 
