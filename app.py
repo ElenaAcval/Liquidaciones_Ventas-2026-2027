@@ -1,15 +1,14 @@
 import streamlit as st
 import pandas as pd
 import datetime
-from streamlit_gsheets import GSheetsConnection
+import requests
 
 st.set_page_config(page_title="Control de Liquidaciones 2026-2027", layout="wide")
 
-# AQUÍ PEGAS EL LINK DE TU GOOGLE SHEET (Reemplaza el texto entre comillas)
-SHEET_URL = "https://docs.google.com/spreadsheets/d/19zhFm7ety4JL6sImcWF5HLHGBo_X1JkrD37FQtgndP4/edit?usp=sharing"
-
-# Conexión a Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
+# URL DE TU GOOGLE SHEET PARA LECTURA CSV
+SHEET_ID = "https://docs.google.com/spreadsheets/d/19zhFm7ety4JL6sImcWF5HLHGBo_X1JkrD37FQtgndP4/edit?usp=sharing".replace(" ", "")  # Tu ID extraído de la URL
+# PEGA AQUÍ LA URL DEL WEBHOOK DE APPS SCRIPT (Paso 1):
+WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwFVBKZXITSe9PFBe0HuQzxW6Yar4e7c29s9P8QIrzYKtlQu1zWPQnLOiFyRvkhZZr7/exec"
 
 st.title("🍇 Control y Conciliación de Liquidaciones 2026-2027")
 st.subheader("Agrícola Curutarán & Agroclas")
@@ -22,19 +21,21 @@ catalogo_df = pd.DataFrame([
     {"Agricola": "Agroclas", "Rancho": "Claro Org 21752", "Productor": "28470", "Cultivo": "Zarzamora Orgánica"},
 ])
 
-# Cargar datos desde Google Sheets
-@st.cache_data(ttl=5)
-def cargar_datos(worksheet_name):
+# Función para cargar datos desde Google Sheets vía exportación CSV pública
+@st.cache_data(ttl=2)
+def cargar_hoja(nombre_hoja):
+    url = f"https://docs.google.com/spreadsheets/d/19zhFm7ety4JL6sImcWF5HLHGBo_X1jkRD37FQtgndP4/gviz/tq?tqx=out:csv&sheet={nombre_hoja}"
     try:
-        data = conn.read(spreadsheet=SHEET_URL, worksheet=worksheet_name, ttl=5)
-        return data if not data.empty else pd.DataFrame(columns=["Fecha", "Agricola", "Rancho", "Monto USD", "Notas"])
+        df = pd.read_csv(url)
+        df["Monto USD"] = pd.to_numeric(df["Monto USD"], errors="coerce").fillna(0)
+        return df
     except Exception:
         return pd.DataFrame(columns=["Fecha", "Agricola", "Rancho", "Monto USD", "Notas"])
 
-depositos_df = cargar_datos("Depositos")
-liquidaciones_df = cargar_datos("Liquidaciones")
+depositos_df = cargar_hoja("Depositos")
+liquidaciones_df = cargar_hoja("Liquidaciones")
 
-# Menú de navegación
+# Menú
 menu = st.sidebar.radio("Navegación / Menú", [
     "📊 Dashboard / Conciliación", 
     "💵 Registrar Depósito", 
@@ -72,12 +73,21 @@ elif menu == "💵 Registrar Depósito":
         
         submitted = st.form_submit_button("Guardar Depósito")
         if submitted:
-            nueva_fila = pd.DataFrame([{"Fecha": str(fecha), "Agricola": agricola_sel, "Rancho": rancho_sel, "Monto USD": monto, "Notas": notas}])
-            updated_df = pd.concat([depositos_df, nueva_fila], ignore_index=True)
-            conn.update(spreadsheet=SHEET_URL, worksheet="Depositos", data=updated_df)
-            st.success("✅ Depósito registrado e insertado en Google Sheets")
-            st.cache_data.clear()
-            st.rerun()
+            payload = {
+                "hoja": "Depositos",
+                "fecha": str(fecha),
+                "agricola": agricola_sel,
+                "rancho": rancho_sel,
+                "monto": monto,
+                "notas": notas
+            }
+            res = requests.post(WEBHOOK_URL, json=payload)
+            if res.status_code == 200:
+                st.success("✅ Depósito guardado permanentemente en Google Sheets")
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error("Error al guardar en Google Sheets. Revisa la URL del Webhook.")
 
     st.subheader("Historial de Depósitos Capturados")
     st.dataframe(depositos_df, use_container_width=True)
@@ -93,12 +103,21 @@ elif menu == "📄 Registrar Liquidación":
         
         submitted = st.form_submit_button("Guardar Liquidación")
         if submitted:
-            nueva_fila = pd.DataFrame([{"Fecha": str(fecha), "Agricola": agricola_sel, "Rancho": rancho_sel, "Monto USD": monto, "Notas": notas}])
-            updated_df = pd.concat([liquidaciones_df, nueva_fila], ignore_index=True)
-            conn.update(spreadsheet=SHEET_URL, worksheet="Liquidaciones", data=updated_df)
-            st.success("✅ Liquidación registrada e insertada en Google Sheets")
-            st.cache_data.clear()
-            st.rerun()
+            payload = {
+                "hoja": "Liquidaciones",
+                "fecha": str(fecha),
+                "agricola": agricola_sel,
+                "rancho": rancho_sel,
+                "monto": monto,
+                "notas": notas
+            }
+            res = requests.post(WEBHOOK_URL, json=payload)
+            if res.status_code == 200:
+                st.success("✅ Liquidación guardada permanentemente en Google Sheets")
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error("Error al guardar en Google Sheets. Revisa la URL del Webhook.")
 
     st.subheader("Historial de Liquidaciones Capturadas")
     st.dataframe(liquidaciones_df, use_container_width=True)
