@@ -5,13 +5,11 @@ import requests
 
 st.set_page_config(page_title="Control de Liquidaciones 2026-2027", layout="wide")
 
-# URL DEL WEBHOOK (Asegúrate de tener tu URL copiada de Apps Script)
 WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwFVBKZXITSe9PFBe0HuQzxW6Yar4e7c29s9P8QIrzYKtlQu1zWPQnLOiFyRvkhZZr7/exec"
 SHEET_ID = "19zhFm7ety4JL6sImcWF5HLHGBo_X1jkRD37FQtgndP4"
 
 st.title("🍇 Control y Conciliación de Liquidaciones 2026-2027")
 
-# Catálogo oficial de ranchos
 catalogo_df = pd.DataFrame([
     {"Agricola": "Agrícola Curutarán", "Rancho": "Ramizal 17040", "Productor": "244470", "Cultivo": "Zarzamora"},
     {"Agricola": "Agrícola Curutarán", "Rancho": "Potrero Org 16860", "Productor": "244470", "Cultivo": "Zarzamora Orgánica"},
@@ -19,7 +17,6 @@ catalogo_df = pd.DataFrame([
     {"Agricola": "Agroclas", "Rancho": "Claro Org 21752", "Productor": "28470", "Cultivo": "Zarzamora Orgánica"},
 ])
 
-# Función para cargar datos desde Google Sheets vía CSV
 @st.cache_data(ttl=2)
 def cargar_hoja(nombre_hoja):
     url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={nombre_hoja}"
@@ -28,7 +25,7 @@ def cargar_hoja(nombre_hoja):
         df["Monto USD"] = pd.to_numeric(df["Monto USD"], errors="coerce").fillna(0)
         return df
     except Exception:
-        return pd.DataFrame(columns=["Fecha", "Agricola", "Rancho", "Monto USD", "Notas"])
+        return pd.DataFrame(columns=["Fecha", "Agricola", "Rancho", "Monto USD", "Notas", "Diferencia (USD)", "Estatus"])
 
 dep_curutaran = cargar_hoja("Depositos_Curutaran")
 liq_curutaran = cargar_hoja("Liquidaciones_Curutaran")
@@ -38,7 +35,25 @@ liq_agroclas = cargar_hoja("Liquidaciones_Agroclas")
 depositos_all = pd.concat([dep_curutaran, dep_agroclas], ignore_index=True)
 liquidaciones_all = pd.concat([liq_curutaran, liq_agroclas], ignore_index=True)
 
-# Menú principal
+def calcular_conciliacion_rancho(rancho, nuevo_monto, tipo):
+    dep_rancho = depositos_all[depositos_all["Rancho"] == rancho]["Monto USD"].sum()
+    liq_rancho = liquidaciones_all[liquidaciones_all["Rancho"] == rancho]["Monto USD"].sum()
+    
+    if tipo == "Depositos":
+        dep_rancho += nuevo_monto
+    elif tipo == "Liquidaciones":
+        liq_rancho += nuevo_monto
+        
+    diferencia = dep_rancho - liq_rancho
+    if round(diferencia, 2) == 0:
+        estatus = "✅ CONCILIADO"
+    elif diferencia > 0:
+        estatus = "⚠️ PENDIENTE LIQ"
+    else:
+        estatus = "🔴 SOBREPAGO"
+        
+    return diferencia, estatus
+
 menu = st.sidebar.radio("Navegación", [
     "📊 Dashboard y Conciliación", 
     "💵 Registrar Depósito", 
@@ -47,8 +62,7 @@ menu = st.sidebar.radio("Navegación", [
 ])
 
 if menu == "📊 Dashboard y Conciliación":
-    st.header("📊 Resumen de Conciliación y Diferencias")
-    
+    st.header("📊 Resumen de Conciliación General")
     agricola_filtro = st.selectbox("Seleccionar Agrícola", ["Todas", "Agrícola Curutarán", "Agroclas"])
     
     if agricola_filtro != "Todas":
@@ -79,11 +93,6 @@ if menu == "📊 Dashboard y Conciliación":
         }), 
         use_container_width=True
     )
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Depósitos Banco", f"${resumen['Total Depósitos'].sum():,.2f}")
-    col2.metric("Total Liquidado Driscoll's", f"${resumen['Total Liquidado'].sum():,.2f}")
-    col3.metric("Diferencia Pendiente", f"${resumen['Diferencia (USD)'].sum():,.2f}")
 
 elif menu == "💵 Registrar Depósito":
     st.header("💵 Registrar Depósito Bancario")
@@ -96,21 +105,22 @@ elif menu == "💵 Registrar Depósito":
         
         submitted = st.form_submit_button("Guardar Depósito")
         if submitted:
+            dif, estatus = calcular_conciliacion_rancho(rancho_sel, monto, "Depositos")
             payload = {
                 "tipo": "Depositos",
                 "fecha": str(fecha),
                 "agricola": agricola_sel,
                 "rancho": rancho_sel,
                 "monto": monto,
-                "notas": notas
+                "notas": notas,
+                "diferencia": dif,
+                "estatus": estatus
             }
             res = requests.post(WEBHOOK_URL, json=payload)
             if res.status_code == 200:
-                st.success(f"✅ Depósito guardado correctamente en la hoja de {agricola_sel}")
+                st.success(f"✅ Depósito guardado con diferencia (${dif:,.2f}) en {agricola_sel}")
                 st.cache_data.clear()
                 st.rerun()
-            else:
-                st.error("Error al registrar el depósito.")
 
     st.subheader("Historial de Depósitos Capturados")
     st.dataframe(depositos_all, use_container_width=True)
@@ -126,21 +136,22 @@ elif menu == "📄 Registrar Liquidación":
         
         submitted = st.form_submit_button("Guardar Liquidación")
         if submitted:
+            dif, estatus = calcular_conciliacion_rancho(rancho_sel, monto, "Liquidaciones")
             payload = {
                 "tipo": "Liquidaciones",
                 "fecha": str(fecha),
                 "agricola": agricola_sel,
                 "rancho": rancho_sel,
                 "monto": monto,
-                "notas": notas
+                "notas": notas,
+                "diferencia": dif,
+                "estatus": estatus
             }
             res = requests.post(WEBHOOK_URL, json=payload)
             if res.status_code == 200:
-                st.success(f"✅ Liquidación guardada correctamente en la hoja de {agricola_sel}")
+                st.success(f"✅ Liquidación guardada con diferencia (${dif:,.2f}) en {agricola_sel}")
                 st.cache_data.clear()
                 st.rerun()
-            else:
-                st.error("Error al registrar la liquidación.")
 
     st.subheader("Historial de Liquidaciones Capturadas")
     st.dataframe(liquidaciones_all, use_container_width=True)
