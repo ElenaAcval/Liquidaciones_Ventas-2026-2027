@@ -1,20 +1,13 @@
 import streamlit as st
 import pandas as pd
 import datetime
-from streamlit_gsheets import GSheetsConnection
 
-st.set_page_config(page_title="Control de Liquidaciones y Depósitos", layout="wide")
+st.set_page_config(page_title="Control de Liquidaciones 2026-2027", layout="wide")
 
 st.title("🍇 Control y Conciliación de Liquidaciones 2026-2027")
 st.subheader("Agrícola Curutarán & Agroclas")
 
-# Enlace a tu Google Sheet (Reemplaza con tu URL copiada)
-SHEET_URL = st.sidebar.text_input("URL de Google Sheets", value="https://docs.google.com/spreadsheets/d/TU_ID_DE_HOJA_AQUI/edit#gid=0")
-
-# Conexión a Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# Cargar catálogo fijo
+# Catálogo oficial de ranchos
 catalogo_df = pd.DataFrame([
     {"Agricola": "Agrícola Curutarán", "Rancho": "Ramizal 17040", "Productor": "244470", "Cultivo": "Zarzamora"},
     {"Agricola": "Agrícola Curutarán", "Rancho": "Potrero Org 16860", "Productor": "244470", "Cultivo": "Zarzamora Orgánica"},
@@ -22,32 +15,30 @@ catalogo_df = pd.DataFrame([
     {"Agricola": "Agroclas", "Rancho": "Claro Org 21752", "Productor": "28470", "Cultivo": "Zarzamora Orgánica"},
 ])
 
-# Cargar datos desde Google Sheets
-try:
-    depositos_df = conn.read(spreadsheet=SHEET_URL, worksheet="Depositos", ttl=0)
-    depositos_df["Monto USD"] = pd.to_numeric(depositos_df["Monto USD"], errors="coerce").fillna(0)
-except Exception:
-    depositos_df = pd.DataFrame(columns=["Fecha", "Agricola", "Rancho", "Monto USD", "Notas"])
+# Inicializar almacenamiento temporal persistente por sesión
+if "depositos" not in st.session_state:
+    st.session_state["depositos"] = pd.DataFrame(columns=["Fecha", "Agricola", "Rancho", "Monto USD", "Notas"])
 
-try:
-    liquidaciones_df = conn.read(spreadsheet=SHEET_URL, worksheet="Liquidaciones", ttl=0)
-    liquidaciones_df["Monto USD"] = pd.to_numeric(liquidaciones_df["Monto USD"], errors="coerce").fillna(0)
-except Exception:
-    liquidaciones_df = pd.DataFrame(columns=["Fecha", "Agricola", "Rancho", "Monto USD", "Notas"])
+if "liquidaciones" not in st.session_state:
+    st.session_state["liquidaciones"] = pd.DataFrame(columns=["Fecha", "Agricola", "Rancho", "Monto USD", "Notas"])
 
-# Menú
+# Menú de navegación
 menu = st.sidebar.radio("Navegación / Menú", [
     "📊 Dashboard / Conciliación", 
     "💵 Registrar Depósito", 
     "📄 Registrar Liquidación", 
-    "🏡 Catálogo de Ranchos"
+    "🏡 Catálogo de Ranchos",
+    "⚙️ Opciones de Limpieza"
 ])
 
 if menu == "📊 Dashboard / Conciliación":
     st.header("📊 Resumen de Conciliación General")
     
-    df_dep = depositos_df.groupby("Rancho")["Monto USD"].sum().reset_index().rename(columns={"Monto USD": "Total Depósitos"}) if not depositos_df.empty else pd.DataFrame(columns=["Rancho", "Total Depósitos"])
-    df_liq = liquidaciones_df.groupby("Rancho")["Monto USD"].sum().reset_index().rename(columns={"Monto USD": "Total Liquidado"}) if not liquidaciones_df.empty else pd.DataFrame(columns=["Rancho", "Total Liquidado"])
+    dep_df = st.session_state["depositos"]
+    liq_df = st.session_state["liquidaciones"]
+    
+    df_dep = dep_df.groupby("Rancho")["Monto USD"].sum().reset_index().rename(columns={"Monto USD": "Total Depósitos"}) if not dep_df.empty else pd.DataFrame(columns=["Rancho", "Total Depósitos"])
+    df_liq = liq_df.groupby("Rancho")["Monto USD"].sum().reset_index().rename(columns={"Monto USD": "Total Liquidado"}) if not liq_df.empty else pd.DataFrame(columns=["Rancho", "Total Liquidado"])
     
     resumen = pd.merge(catalogo_df, df_dep, on="Rancho", how="left").fillna(0)
     resumen = pd.merge(resumen, df_liq, on="Rancho", how="left").fillna(0)
@@ -71,16 +62,15 @@ elif menu == "💵 Registrar Depósito":
         monto = st.number_input("Monto Depósito (USD)", min_value=0.0, step=100.0, format="%.2f")
         notas = st.text_input("Concepto / Notas")
         
-        submitted = st.form_submit_button("Guardar Depósito en Google Sheets")
+        submitted = st.form_submit_button("Guardar Depósito")
         if submitted:
             nueva_fila = pd.DataFrame([{"Fecha": str(fecha), "Agricola": agricola_sel, "Rancho": rancho_sel, "Monto USD": monto, "Notas": notas}])
-            updated_df = pd.concat([depositos_df, nueva_fila], ignore_index=True)
-            conn.update(spreadsheet=SHEET_URL, worksheet="Depositos", data=updated_df)
-            st.success("✅ ¡Depósito guardado en Google Sheets con éxito!")
+            st.session_state["depositos"] = pd.concat([st.session_state["depositos"], nueva_fila], ignore_index=True)
+            st.success("✅ Depósito registrado correctamente")
             st.rerun()
 
-    st.subheader("Historial de Depósitos Guardados")
-    st.dataframe(depositos_df, use_container_width=True)
+    st.subheader("Historial de Depósitos Capturados")
+    st.dataframe(st.session_state["depositos"], use_container_width=True)
 
 elif menu == "📄 Registrar Liquidación":
     st.header("📄 Captura de Reporte de Liquidación Driscoll's")
@@ -91,17 +81,24 @@ elif menu == "📄 Registrar Liquidación":
         monto = st.number_input("Monto Liquidación (USD)", min_value=0.0, step=100.0, format="%.2f")
         notas = st.text_input("No. Liquidación / Notas")
         
-        submitted = st.form_submit_button("Guardar Liquidación en Google Sheets")
+        submitted = st.form_submit_button("Guardar Liquidación")
         if submitted:
             nueva_fila = pd.DataFrame([{"Fecha": str(fecha), "Agricola": agricola_sel, "Rancho": rancho_sel, "Monto USD": monto, "Notas": notas}])
-            updated_df = pd.concat([liquidaciones_df, nueva_fila], ignore_index=True)
-            conn.update(spreadsheet=SHEET_URL, worksheet="Liquidaciones", data=updated_df)
-            st.success("✅ ¡Liquidación guardada en Google Sheets con éxito!")
+            st.session_state["liquidaciones"] = pd.concat([st.session_state["liquidaciones"], nueva_fila], ignore_index=True)
+            st.success("✅ Liquidación registrada correctamente")
             st.rerun()
 
-    st.subheader("Historial de Liquidaciones Guardadas")
-    st.dataframe(liquidaciones_df, use_container_width=True)
+    st.subheader("Historial de Liquidaciones Capturadas")
+    st.dataframe(st.session_state["liquidaciones"], use_container_width=True)
 
 elif menu == "🏡 Catálogo de Ranchos":
     st.header("🏡 Catálogo Oficial de Ranchos")
     st.table(catalogo_df)
+
+elif menu == "⚙️ Opciones de Limpieza":
+    st.header("⚙️ Limpieza de Datos")
+    if st.button("🔴 Borrar todos los depósitos y liquidaciones (Empezar de 0)"):
+        st.session_state["depositos"] = pd.DataFrame(columns=["Fecha", "Agricola", "Rancho", "Monto USD", "Notas"])
+        st.session_state["liquidaciones"] = pd.DataFrame(columns=["Fecha", "Agricola", "Rancho", "Monto USD", "Notas"])
+        st.success("Se han eliminado todos los registros correctamente.")
+        st.rerun()
