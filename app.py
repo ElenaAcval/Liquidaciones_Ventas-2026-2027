@@ -5,13 +5,11 @@ import requests
 
 st.set_page_config(page_title="Control de Liquidaciones 2026-2027", layout="wide")
 
-# URL DE TU GOOGLE SHEET PARA LECTURA CSV
-SHEET_ID = "19zhFm7ety4JL6sImcWF5HLHGBo_X1jk rD37FQtgndP4".replace(" ", "")  # Tu ID extraído de la URL
-# PEGA AQUÍ LA URL DEL WEBHOOK DE APPS SCRIPT (Paso 1):
+# URL DEL WEBHOOK (Asegúrate de tener tu URL copiada de Apps Script)
 WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwFVBKZXITSe9PFBe0HuQzxW6Yar4e7c29s9P8QIrzYKtlQu1zWPQnLOiFyRvkhZZr7/exec"
+SHEET_ID = "19zhFm7ety4JL6sImcWF5HLHGBo_X1jkRD37FQtgndP4"
 
 st.title("🍇 Control y Conciliación de Liquidaciones 2026-2027")
-st.subheader("Agrícola Curutarán & Agroclas")
 
 # Catálogo oficial de ranchos
 catalogo_df = pd.DataFrame([
@@ -21,10 +19,10 @@ catalogo_df = pd.DataFrame([
     {"Agricola": "Agroclas", "Rancho": "Claro Org 21752", "Productor": "28470", "Cultivo": "Zarzamora Orgánica"},
 ])
 
-# Función para cargar datos desde Google Sheets vía exportación CSV pública
+# Función para cargar datos desde Google Sheets vía CSV
 @st.cache_data(ttl=2)
 def cargar_hoja(nombre_hoja):
-    url = f"https://docs.google.com/spreadsheets/d/19zhFm7ety4JL6sImcWF5HLHGBo_X1jkRD37FQtgndP4/gviz/tq?tqx=out:csv&sheet={nombre_hoja}"
+    url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={nombre_hoja}"
     try:
         df = pd.read_csv(url)
         df["Monto USD"] = pd.to_numeric(df["Monto USD"], errors="coerce").fillna(0)
@@ -32,38 +30,63 @@ def cargar_hoja(nombre_hoja):
     except Exception:
         return pd.DataFrame(columns=["Fecha", "Agricola", "Rancho", "Monto USD", "Notas"])
 
-depositos_df = cargar_hoja("Depositos")
-liquidaciones_df = cargar_hoja("Liquidaciones")
+dep_curutaran = cargar_hoja("Depositos_Curutaran")
+liq_curutaran = cargar_hoja("Liquidaciones_Curutaran")
+dep_agroclas = cargar_hoja("Depositos_Agroclas")
+liq_agroclas = cargar_hoja("Liquidaciones_Agroclas")
 
-# Menú
-menu = st.sidebar.radio("Navegación / Menú", [
-    "📊 Dashboard / Conciliación", 
+depositos_all = pd.concat([dep_curutaran, dep_agroclas], ignore_index=True)
+liquidaciones_all = pd.concat([liq_curutaran, liq_agroclas], ignore_index=True)
+
+# Menú principal
+menu = st.sidebar.radio("Navegación", [
+    "📊 Dashboard y Conciliación", 
     "💵 Registrar Depósito", 
     "📄 Registrar Liquidación", 
     "🏡 Catálogo de Ranchos"
 ])
 
-if menu == "📊 Dashboard / Conciliación":
-    st.header("📊 Resumen de Conciliación General")
+if menu == "📊 Dashboard y Conciliación":
+    st.header("📊 Resumen de Conciliación y Diferencias")
     
-    df_dep = depositos_df.groupby("Rancho")["Monto USD"].sum().reset_index().rename(columns={"Monto USD": "Total Depósitos"}) if not depositos_df.empty and "Monto USD" in depositos_df.columns else pd.DataFrame(columns=["Rancho", "Total Depósitos"])
-    df_liq = liquidaciones_df.groupby("Rancho")["Monto USD"].sum().reset_index().rename(columns={"Monto USD": "Total Liquidado"}) if not liquidaciones_df.empty and "Monto USD" in liquidaciones_df.columns else pd.DataFrame(columns=["Rancho", "Total Liquidado"])
+    agricola_filtro = st.selectbox("Seleccionar Agrícola", ["Todas", "Agrícola Curutarán", "Agroclas"])
     
-    resumen = pd.merge(catalogo_df, df_dep, on="Rancho", how="left").fillna(0)
+    if agricola_filtro != "Todas":
+        cat_filtrado = catalogo_df[catalogo_df["Agricola"] == agricola_filtro]
+        dep_f = depositos_all[depositos_all["Agricola"] == agricola_filtro]
+        liq_f = liquidaciones_all[liquidaciones_all["Agricola"] == agricola_filtro]
+    else:
+        cat_filtrado = catalogo_df
+        dep_f = depositos_all
+        liq_f = liquidaciones_all
+
+    df_dep = dep_f.groupby("Rancho")["Monto USD"].sum().reset_index().rename(columns={"Monto USD": "Total Depósitos"}) if not dep_f.empty else pd.DataFrame(columns=["Rancho", "Total Depósitos"])
+    df_liq = liq_f.groupby("Rancho")["Monto USD"].sum().reset_index().rename(columns={"Monto USD": "Total Liquidado"}) if not liq_f.empty else pd.DataFrame(columns=["Rancho", "Total Liquidado"])
+    
+    resumen = pd.merge(cat_filtrado, df_dep, on="Rancho", how="left").fillna(0)
     resumen = pd.merge(resumen, df_liq, on="Rancho", how="left").fillna(0)
     
-    resumen["Diferencia"] = resumen["Total Depósitos"] - resumen["Total Liquidado"]
-    resumen["Estatus"] = resumen["Diferencia"].apply(lambda x: "✅ CONCILIADO" if round(x, 2) == 0 else ("⚠️ PENDIENTE LIQ" if x > 0 else "🔴 SOBREPAGO"))
+    resumen["Diferencia (USD)"] = resumen["Total Depósitos"] - resumen["Total Liquidado"]
+    resumen["Estatus"] = resumen["Diferencia (USD)"].apply(
+        lambda x: "✅ CONCILIADO" if round(x, 2) == 0 else ("⚠️ PENDIENTE LIQ" if x > 0 else "🔴 SOBREPAGO")
+    )
     
-    st.dataframe(resumen.style.format({"Total Depósitos": "${:,.2f}", "Total Liquidado": "${:,.2f}", "Diferencia": "${:,.2f}"}), use_container_width=True)
+    st.dataframe(
+        resumen.style.format({
+            "Total Depósitos": "${:,.2f}", 
+            "Total Liquidado": "${:,.2f}", 
+            "Diferencia (USD)": "${:,.2f}"
+        }), 
+        use_container_width=True
+    )
     
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Depósitos Banco", f"${resumen['Total Depósitos'].sum():,.2f}")
-    col2.metric("Total Reportado Liquidaciones", f"${resumen['Total Liquidado'].sum():,.2f}")
-    col3.metric("Diferencia Por Conciliar", f"${resumen['Diferencia'].sum():,.2f}")
+    col2.metric("Total Liquidado Driscoll's", f"${resumen['Total Liquidado'].sum():,.2f}")
+    col3.metric("Diferencia Pendiente", f"${resumen['Diferencia (USD)'].sum():,.2f}")
 
 elif menu == "💵 Registrar Depósito":
-    st.header("💵 Captura de Depósito Bancario")
+    st.header("💵 Registrar Depósito Bancario")
     with st.form("form_deposito", clear_on_submit=True):
         fecha = st.date_input("Fecha del Pago", datetime.date.today())
         rancho_sel = st.selectbox("Rancho", catalogo_df["Rancho"].tolist())
@@ -74,7 +97,7 @@ elif menu == "💵 Registrar Depósito":
         submitted = st.form_submit_button("Guardar Depósito")
         if submitted:
             payload = {
-                "hoja": "Depositos",
+                "tipo": "Depositos",
                 "fecha": str(fecha),
                 "agricola": agricola_sel,
                 "rancho": rancho_sel,
@@ -83,17 +106,17 @@ elif menu == "💵 Registrar Depósito":
             }
             res = requests.post(WEBHOOK_URL, json=payload)
             if res.status_code == 200:
-                st.success("✅ Depósito guardado permanentemente en Google Sheets")
+                st.success(f"✅ Depósito guardado correctamente en la hoja de {agricola_sel}")
                 st.cache_data.clear()
                 st.rerun()
             else:
-                st.error("Error al guardar en Google Sheets. Revisa la URL del Webhook.")
+                st.error("Error al registrar el depósito.")
 
     st.subheader("Historial de Depósitos Capturados")
-    st.dataframe(depositos_df, use_container_width=True)
+    st.dataframe(depositos_all, use_container_width=True)
 
 elif menu == "📄 Registrar Liquidación":
-    st.header("📄 Captura de Reporte de Liquidación Driscoll's")
+    st.header("📄 Registrar Liquidación Driscoll's")
     with st.form("form_liq", clear_on_submit=True):
         fecha = st.date_input("Fecha de Liquidación", datetime.date.today())
         rancho_sel = st.selectbox("Rancho", catalogo_df["Rancho"].tolist())
@@ -104,7 +127,7 @@ elif menu == "📄 Registrar Liquidación":
         submitted = st.form_submit_button("Guardar Liquidación")
         if submitted:
             payload = {
-                "hoja": "Liquidaciones",
+                "tipo": "Liquidaciones",
                 "fecha": str(fecha),
                 "agricola": agricola_sel,
                 "rancho": rancho_sel,
@@ -113,14 +136,14 @@ elif menu == "📄 Registrar Liquidación":
             }
             res = requests.post(WEBHOOK_URL, json=payload)
             if res.status_code == 200:
-                st.success("✅ Liquidación guardada permanentemente en Google Sheets")
+                st.success(f"✅ Liquidación guardada correctamente en la hoja de {agricola_sel}")
                 st.cache_data.clear()
                 st.rerun()
             else:
-                st.error("Error al guardar en Google Sheets. Revisa la URL del Webhook.")
+                st.error("Error al registrar la liquidación.")
 
     st.subheader("Historial de Liquidaciones Capturadas")
-    st.dataframe(liquidaciones_df, use_container_width=True)
+    st.dataframe(liquidaciones_all, use_container_width=True)
 
 elif menu == "🏡 Catálogo de Ranchos":
     st.header("🏡 Catálogo Oficial de Ranchos")
