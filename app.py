@@ -6,7 +6,7 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="Control de Liquidaciones 2026-2027", layout="wide")
 
 # AQUÍ PEGAS EL LINK DE TU GOOGLE SHEET (Reemplaza el texto entre comillas)
-SHEET_URL = "AQUÍ_PEGA_TU_LINK_DE_GOOGLE_SHEETS"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/19zhFm7ety4JL6sImcWF5HLHGBo_X1JkrD37FQtgndP4/edit?usp=sharing"
 
 # Conexión a Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
